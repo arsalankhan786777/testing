@@ -1,0 +1,140 @@
+version: 0.2
+
+# Environment variables (change these)
+env:
+  variables:
+    CHANNEL_URL: "https://www.youtube.com/@MrBeast"
+    MAX_VIDEOS: "5"
+    VIDEO_QUALITY: "720"
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.11
+    commands:
+      - echo "================================================"
+      - echo "🚀 AWS CodeBuild - YouTube Downloader"
+      - echo "================================================"
+      - echo "Installing system dependencies..."
+      - apt-get update -qq
+      - apt-get install -y ffmpeg wget curl
+      - echo "Installing Python packages..."
+      - pip install --upgrade pip
+      - pip install yt-dlp requests
+
+  pre_build:
+    commands:
+      - echo "================================================"
+      - echo "📊 Build Information"
+      - echo "================================================"
+      - echo "Build ID: $CODEBUILD_BUILD_ID"
+      - echo "Build Number: $CODEBUILD_BUILD_NUMBER"
+      - echo "Current Time: $(date)"
+      - echo "Channel URL: $CHANNEL_URL"
+      - echo "Max Videos: $MAX_VIDEOS"
+      - echo "================================================"
+
+  build:
+    commands:
+      - echo "🎬 Starting YouTube Download..."
+      - |
+        python3 - << 'PYTHON_SCRIPT'
+        import yt_dlp
+        import os
+        import json
+        from datetime import datetime
+        
+        # Configuration
+        CHANNEL_URL = os.environ.get('CHANNEL_URL', 'https://www.youtube.com/@MrBeast')
+        MAX_VIDEOS = int(os.environ.get('MAX_VIDEOS', '5'))
+        VIDEO_QUALITY = os.environ.get('VIDEO_QUALITY', '720')
+        
+        # Create download directory
+        os.makedirs('downloads', exist_ok=True)
+        
+        # yt-dlp configuration
+        ydl_opts = {
+            'outtmpl': 'downloads/%(title)s_%(id)s.%(ext)s',
+            'format': f'best[height<={VIDEO_QUALITY}][ext=mp4]/best[ext=mp4]/best',
+            'quiet': False,
+            'no_warnings': False,
+            'ignoreerrors': True,
+            'playlistend': MAX_VIDEOS,
+            'writeinfojson': True,
+            'writethumbnail': True,
+        }
+        
+        print(f"📥 Downloading from: {CHANNEL_URL}")
+        print(f"📊 Max videos to download: {MAX_VIDEOS}")
+        print(f"📺 Video quality: {VIDEO_QUALITY}p")
+        print("="*50)
+        
+        # Download videos
+        downloaded_videos = []
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            try:
+                info = ydl.extract_info(CHANNEL_URL, download=True)
+                
+                # Get video information
+                if 'entries' in info:
+                    for entry in info['entries'][:MAX_VIDEOS]:
+                        if entry:
+                            downloaded_videos.append({
+                                'title': entry.get('title', 'Unknown'),
+                                'id': entry.get('id', 'Unknown'),
+                                'duration': entry.get('duration', 0),
+                                'view_count': entry.get('view_count', 0)
+                            })
+                
+            except Exception as e:
+                print(f"Error: {e}")
+        
+        # Save download statistics
+        stats = {
+            'timestamp': datetime.now().isoformat(),
+            'channel_url': CHANNEL_URL,
+            'videos_downloaded': len(downloaded_videos),
+            'videos': downloaded_videos
+        }
+        
+        with open('downloads/stats.json', 'w') as f:
+            json.dump(stats, f, indent=2)
+        
+        print("="*50)
+        print(f"✅ Download completed!")
+        print(f"📁 Total videos downloaded: {len(downloaded_videos)}")
+        
+        # List downloaded files
+        print("\n📂 Downloaded files:")
+        for root, dirs, files in os.walk('downloads'):
+            for file in files:
+                file_path = os.path.join(root, file)
+                size_mb = os.path.getsize(file_path) / (1024*1024)
+                print(f"  - {file[:50]}... ({size_mb:.2f} MB)")
+        
+        PYTHON_SCRIPT
+
+  post_build:
+    commands:
+      - echo "================================================"
+      - echo "📊 Download Summary"
+      - echo "================================================"
+      - |
+        if [ -f downloads/stats.json ]; then
+          cat downloads/stats.json
+        fi
+      - echo "================================================"
+      - echo "✅ Build completed successfully!"
+      - echo "Time: $(date)"
+      - echo "================================================"
+
+# Save downloaded videos as artifacts
+artifacts:
+  files:
+    - 'downloads/**/*'
+  name: youtube-downloads-$(date +%Y%m%d-%H%M%S)
+  
+# Cache pip packages for faster builds
+cache:
+  paths:
+    - '/root/.cache/pip/**/*'
